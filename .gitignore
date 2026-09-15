@@ -1,0 +1,32 @@
+# ============================================
+# 根目录 .gitignore（跨前后端的统一忽略规则）
+# 子目录 backend/、frontend/ 各自的 .gitignore 仍生效
+# ============================================
+
+# ---- 后端构建与运行时产物 ----
+backend/target/
+# 用户上传的头像等运行时文件，不入库
+backend/uploads/
+# backend-out.log / backend-err.log
+backend/*.log
+.idea/
+*.iml
+*.iws
+*.ipr
+.vscode/
+
+# ---- 前端依赖与构建产物 ----
+frontend/node_modules/
+frontend/dist/
+frontend/dist-ssr/
+frontend/*.local
+frontend/*.log
+
+# ---- 操作系统杂项 ----
+.DS_Store
+Thumbs.db
+
+# ---- 敏感配置（含数据库密码、Redis 密码、和风 API Key）----
+# 真实配置仅保存在本地，不入库；请改用下方示例模板
+# 复制为 application.properties 后填入你自己的值
+backend/src/main/resources/application.properties

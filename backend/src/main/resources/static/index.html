@@ -1,0 +1,818 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>气象数据可视化仪表盘</title>
+    <script src="./echarts.min.js"></script>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: "Microsoft YaHei", "PingFang SC", sans-serif;
+            background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%);
+            color: #e2e8f0;
+            min-height: 100vh;
+            padding: 20px;
+        }
+        .header {
+            text-align: center;
+            margin-bottom: 20px;
+        }
+        .header h1 {
+            font-size: 28px;
+            background: linear-gradient(90deg, #38bdf8, #818cf8);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            margin-bottom: 6px;
+        }
+        .header p { color: #94a3b8; font-size: 14px; }
+
+        /* 指标切换标签 */
+        .metric-tabs {
+            display: flex;
+            justify-content: center;
+            gap: 10px;
+            margin-bottom: 20px;
+            flex-wrap: wrap;
+        }
+        .metric-tab {
+            padding: 10px 24px;
+            border-radius: 8px;
+            background: rgba(30, 41, 59, 0.8);
+            border: 1px solid #334155;
+            cursor: pointer;
+            font-size: 15px;
+            transition: all 0.3s;
+            user-select: none;
+        }
+        .metric-tab:hover { border-color: #38bdf8; color: #38bdf8; }
+        .metric-tab.active {
+            background: linear-gradient(135deg, #0ea5e9, #6366f1);
+            border-color: transparent;
+            color: #fff;
+            font-weight: bold;
+            box-shadow: 0 4px 15px rgba(14, 165, 233, 0.4);
+        }
+
+        /* 控制面板 */
+        .control-panel {
+            display: flex;
+            justify-content: center;
+            gap: 20px;
+            margin-bottom: 20px;
+            flex-wrap: wrap;
+            align-items: center;
+        }
+        .control-item {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        .control-item label {
+            color: #94a3b8;
+            font-size: 14px;
+            white-space: nowrap;
+        }
+        .control-item select, .control-item input {
+            padding: 8px 14px;
+            border-radius: 6px;
+            border: 1px solid #334155;
+            background: #1e293b;
+            color: #e2e8f0;
+            font-size: 14px;
+            cursor: pointer;
+            outline: none;
+            min-width: 140px;
+        }
+        .control-item select:focus { border-color: #38bdf8; }
+
+        /* 可搜索城市下拉框 */
+        .searchable-select {
+            position: relative;
+            display: inline-block;
+        }
+        .searchable-select input {
+            min-width: 180px;
+            cursor: text;
+        }
+        .searchable-select input:focus { border-color: #38bdf8; }
+        .city-clear-btn {
+            position: absolute;
+            right: 10px;
+            top: 50%;
+            transform: translateY(-50%);
+            width: 18px;
+            height: 18px;
+            line-height: 16px;
+            text-align: center;
+            border-radius: 50%;
+            background: #475569;
+            color: #cbd5e1;
+            font-size: 14px;
+            cursor: pointer;
+            user-select: none;
+            transition: background 0.15s;
+        }
+        .city-clear-btn:hover {
+            background: #64748b;
+            color: #fff;
+        }
+        .city-dropdown {
+            position: absolute;
+            top: 100%;
+            left: 0;
+            right: 0;
+            max-height: 280px;
+            overflow-y: auto;
+            background: #1e293b;
+            border: 1px solid #334155;
+            border-radius: 6px;
+            margin-top: 4px;
+            z-index: 1000;
+            display: none;
+            box-shadow: 0 8px 24px rgba(0,0,0,0.4);
+        }
+        .city-dropdown.show { display: block; }
+        .city-dropdown-item {
+            padding: 8px 14px;
+            cursor: pointer;
+            font-size: 14px;
+            color: #cbd5e1;
+            border-bottom: 1px solid #1e293b;
+            transition: background 0.15s;
+        }
+        .city-dropdown-item:hover, .city-dropdown-item.active {
+            background: rgba(56, 189, 248, 0.15);
+            color: #38bdf8;
+        }
+        .city-dropdown-item .match-highlight {
+            color: #fbbf24;
+            font-weight: bold;
+        }
+        .city-dropdown-empty {
+            padding: 12px 14px;
+            color: #64748b;
+            font-size: 13px;
+            text-align: center;
+        }
+        .city-dropdown::-webkit-scrollbar { width: 6px; }
+        .city-dropdown::-webkit-scrollbar-thumb { background: #475569; border-radius: 3px; }
+        .btn {
+            padding: 8px 20px;
+            border-radius: 6px;
+            border: none;
+            background: linear-gradient(135deg, #0ea5e9, #6366f1);
+            color: #fff;
+            font-size: 14px;
+            cursor: pointer;
+            transition: all 0.3s;
+        }
+        .btn:hover { opacity: 0.9; transform: translateY(-1px); }
+
+        /* 图表区域 */
+        .charts-row {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 20px;
+            margin-bottom: 20px;
+        }
+        .chart-card {
+            background: rgba(30, 41, 59, 0.6);
+            border: 1px solid #334155;
+            border-radius: 12px;
+            padding: 16px;
+            backdrop-filter: blur(10px);
+        }
+        .chart-title {
+            font-size: 16px;
+            font-weight: bold;
+            margin-bottom: 10px;
+            color: #e2e8f0;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        .chart-title::before {
+            content: '';
+            width: 4px;
+            height: 18px;
+            background: linear-gradient(180deg, #38bdf8, #818cf8);
+            border-radius: 2px;
+        }
+        .chart-container { width: 100%; height: 420px; }
+
+        /* 数据表格 */
+        .table-card {
+            background: rgba(30, 41, 59, 0.6);
+            border: 1px solid #334155;
+            border-radius: 12px;
+            padding: 16px;
+            backdrop-filter: blur(10px);
+        }
+        .data-table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 14px;
+        }
+        .data-table th {
+            background: rgba(56, 189, 248, 0.15);
+            color: #38bdf8;
+            padding: 12px;
+            text-align: left;
+            border-bottom: 2px solid #334155;
+            font-weight: 600;
+        }
+        .data-table td {
+            padding: 10px 12px;
+            border-bottom: 1px solid #1e293b;
+            color: #cbd5e1;
+        }
+        .data-table tr:hover td { background: rgba(56, 189, 248, 0.08); }
+        .rank-badge {
+            display: inline-block;
+            width: 26px;
+            height: 26px;
+            line-height: 26px;
+            text-align: center;
+            border-radius: 50%;
+            font-weight: bold;
+            font-size: 12px;
+        }
+        .rank-1 { background: linear-gradient(135deg, #fbbf24, #f59e0b); color: #1e293b; }
+        .rank-2 { background: linear-gradient(135deg, #cbd5e1, #94a3b8); color: #1e293b; }
+        .rank-3 { background: linear-gradient(135deg, #fb923c, #ea580c); color: #fff; }
+        .rank-other { background: #334155; color: #94a3b8; }
+        .trend-up { color: #f87171; }
+        .trend-down { color: #4ade80; }
+        .trend-stable { color: #fbbf24; }
+
+        /* 加载提示 */
+        .loading {
+            text-align: center;
+            padding: 40px;
+            color: #94a3b8;
+            font-size: 14px;
+        }
+        .error-msg {
+            text-align: center;
+            padding: 30px;
+            color: #f87171;
+            font-size: 14px;
+        }
+
+        @media (max-width: 900px) {
+            .charts-row { grid-template-columns: 1fr; }
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>全国气象数据可视化分析仪表盘</h1>
+        <p>基于 Hive + Spark 数仓 ADS 层结果 · 2000-2020 年历史数据</p>
+    </div>
+
+    <!-- 指标切换 -->
+    <div class="metric-tabs" id="metricTabs"></div>
+
+    <!-- 控制面板 -->
+    <div class="control-panel">
+        <div class="control-item">
+            <label>年份：</label>
+            <select id="yearSelect" onchange="refreshAll()"></select>
+        </div>
+        <div class="control-item">
+            <label>城市：</label>
+            <div class="searchable-select">
+                <input type="text" id="citySearchInput" placeholder="搜索城市名" autocomplete="off">
+                <span class="city-clear-btn" id="cityClearBtn" style="display:none;">×</span>
+                <div class="city-dropdown" id="cityDropdown"></div>
+            </div>
+        </div>
+        <div class="control-item">
+            <label>排名数量：</label>
+            <select id="limitSelect" onchange="refreshAll()">
+                <option value="10">Top 10</option>
+                <option value="15">Top 15</option>
+                <option value="20" selected>Top 20</option>
+                <option value="30">Top 30</option>
+            </select>
+        </div>
+    </div>
+
+    <!-- 图表区 -->
+    <div class="charts-row">
+        <div class="chart-card">
+            <div class="chart-title" id="rankingTitle">城市排名</div>
+            <div class="chart-container" id="rankingChart"></div>
+        </div>
+        <div class="chart-card">
+            <div class="chart-title" id="trendTitle">历年趋势</div>
+            <div class="chart-container" id="trendChart"></div>
+        </div>
+    </div>
+
+    <!-- 数据表格 -->
+    <div class="table-card">
+        <div class="chart-title">排名明细数据</div>
+        <div style="overflow-x: auto;">
+            <table class="data-table" id="dataTable">
+                <thead>
+                    <tr>
+                        <th>排名</th>
+                        <th>城市</th>
+                        <th>省份</th>
+                        <th id="thMetric">指标值</th>
+                        <th id="thDays">天数</th>
+                    </tr>
+                </thead>
+                <tbody id="tableBody"></tbody>
+            </table>
+        </div>
+    </div>
+
+    <script>
+        // ========== 全局状态 ==========
+        let currentMetric = 'rain';
+        let metricMeta = {};
+        let rankingChart, trendChart;
+        let allCities = [];       // 当前指标的全部城市列表
+        let currentCity = '';     // 当前选中的城市
+        let currentCityRank = null; // 当前城市在当前年份的排名
+        let activeDropdownIndex = -1; // 键盘导航当前高亮项
+
+        // ========== 初始化 ==========
+        window.onload = async function() {
+            rankingChart = echarts.init(document.getElementById('rankingChart'));
+            trendChart = echarts.init(document.getElementById('trendChart'));
+            window.addEventListener('resize', () => {
+                rankingChart.resize();
+                trendChart.resize();
+            });
+
+            // 城市搜索框事件
+            const cityInput = document.getElementById('citySearchInput');
+            const cityDropdown = document.getElementById('cityDropdown');
+            const cityClearBtn = document.getElementById('cityClearBtn');
+
+            // 控制清除按钮显示
+            function toggleClearBtn() {
+                cityClearBtn.style.display = cityInput.value ? 'inline-block' : 'none';
+            }
+
+            // 聚焦时显示全部城市
+            cityInput.addEventListener('focus', function() {
+                renderCityDropdown(this.value);
+            });
+
+            // 输入时过滤
+            cityInput.addEventListener('input', function() {
+                renderCityDropdown(this.value);
+                toggleClearBtn();
+            });
+
+            // 清除按钮点击
+            cityClearBtn.addEventListener('click', function(e) {
+                e.stopPropagation();
+                cityInput.value = '';
+                currentCity = '';
+                toggleClearBtn();
+                cityInput.focus();
+                renderCityDropdown('');
+                refreshAll();
+            });
+
+            // 键盘导航
+            cityInput.addEventListener('keydown', function(e) {
+                const items = cityDropdown.querySelectorAll('.city-dropdown-item');
+                if (e.key === 'ArrowDown') {
+                    e.preventDefault();
+                    if (!cityDropdown.classList.contains('show')) {
+                        renderCityDropdown(this.value);
+                        return;
+                    }
+                    activeDropdownIndex = (activeDropdownIndex + 1) % items.length;
+                    updateDropdownActive();
+                    items[activeDropdownIndex]?.scrollIntoView({ block: 'nearest' });
+                } else if (e.key === 'ArrowUp') {
+                    e.preventDefault();
+                    activeDropdownIndex = activeDropdownIndex <= 0 ? items.length - 1 : activeDropdownIndex - 1;
+                    updateDropdownActive();
+                    items[activeDropdownIndex]?.scrollIntoView({ block: 'nearest' });
+                } else if (e.key === 'Enter') {
+                    e.preventDefault();
+                    if (activeDropdownIndex >= 0 && items[activeDropdownIndex]) {
+                        selectCity(items[activeDropdownIndex].dataset.city);
+                    } else if (items.length > 0) {
+                        selectCity(items[0].dataset.city);
+                    }
+                } else if (e.key === 'Escape') {
+                    cityDropdown.classList.remove('show');
+                }
+            });
+
+            // 点击外部隐藏下拉
+            document.addEventListener('click', function(e) {
+                if (!e.target.closest('.searchable-select')) {
+                    cityDropdown.classList.remove('show');
+                }
+            });
+
+            await loadMetrics();
+            await loadYears();
+            await loadCities();
+            refreshAll();
+        };
+
+        // ========== API 请求 ==========
+        async function api(url) {
+            try {
+                const res = await fetch(url);
+                const json = await res.json();
+                if (json.code === 200) return json.data;
+                throw new Error(json.message || '请求失败');
+            } catch (e) {
+                console.error('API Error:', e);
+                throw e;
+            }
+        }
+
+        // ========== 加载指标列表 ==========
+        async function loadMetrics() {
+            const metrics = await api('/api/weather/metrics');
+            const tabsEl = document.getElementById('metricTabs');
+            tabsEl.innerHTML = '';
+            metrics.forEach(m => {
+                metricMeta[m.code] = m;
+                const tab = document.createElement('div');
+                tab.className = 'metric-tab' + (m.code === currentMetric ? ' active' : '');
+                tab.textContent = m.name;
+                tab.dataset.code = m.code;
+                tab.onclick = () => switchMetric(m.code);
+                tabsEl.appendChild(tab);
+            });
+        }
+
+        function switchMetric(code) {
+            if (code === currentMetric) return;
+            // 切换前保存当前选择，保证用户体验连续性
+            const prevYear = document.getElementById('yearSelect').value;
+            const prevCity = currentCity;
+            currentMetric = code;
+            document.querySelectorAll('.metric-tab').forEach(t => {
+                t.classList.toggle('active', t.dataset.code === code);
+            });
+            loadYears(prevYear);
+            loadCities(prevCity);
+            refreshAll();
+        }
+
+        // ========== 加载年份/城市下拉 ==========
+        async function loadYears(preferredYear) {
+            try {
+                const years = await api(`/api/weather/years?metric=${currentMetric}`);
+                const sel = document.getElementById('yearSelect');
+                sel.innerHTML = '';
+                // 倒序（最新年份在前）
+                years.reverse().forEach(y => {
+                    const opt = document.createElement('option');
+                    opt.value = y;
+                    opt.textContent = y + '年';
+                    sel.appendChild(opt);
+                });
+                // 优先保留用户之前选中的年份，不存在则默认选最新一年
+                if (preferredYear && years.includes(parseInt(preferredYear))) {
+                    sel.value = preferredYear;
+                }
+            } catch (e) {
+                document.getElementById('yearSelect').innerHTML = '<option>加载失败</option>';
+            }
+        }
+
+        // ========== 拼音首字母转换（用于城市模糊搜索） ==========
+        // ========== 城市模糊匹配（中文包含匹配） ==========
+        function matchCity(cityName, keyword) {
+            if (!keyword) return true;
+            return cityName.toLowerCase().includes(keyword.toLowerCase().trim());
+        }
+
+        // 高亮匹配的文本
+        function highlightMatch(text, keyword) {
+            if (!keyword) return text;
+            const kw = keyword.trim();
+            const lower = text.toLowerCase();
+            const idx = lower.indexOf(kw.toLowerCase());
+            if (idx >= 0) {
+                return text.substring(0, idx) +
+                    '<span class="match-highlight">' + text.substring(idx, idx + kw.length) + '</span>' +
+                    text.substring(idx + kw.length);
+            }
+            return text;
+        }
+
+        // 渲染城市下拉列表
+        function renderCityDropdown(keyword) {
+            const dropdown = document.getElementById('cityDropdown');
+            const filtered = allCities.filter(c => matchCity(c, keyword));
+            activeDropdownIndex = -1;
+
+            if (filtered.length === 0) {
+                dropdown.innerHTML = '<div class="city-dropdown-empty">未找到匹配的城市</div>';
+            } else {
+                dropdown.innerHTML = filtered.map((c, i) =>
+                    `<div class="city-dropdown-item" data-city="${c}" data-index="${i}">${highlightMatch(c, keyword)}</div>`
+                ).join('');
+            }
+            dropdown.classList.add('show');
+
+            // 绑定点击事件
+            dropdown.querySelectorAll('.city-dropdown-item').forEach(item => {
+                item.addEventListener('click', function() {
+                    selectCity(this.dataset.city);
+                });
+                item.addEventListener('mouseenter', function() {
+                    activeDropdownIndex = parseInt(this.dataset.index);
+                    updateDropdownActive();
+                });
+            });
+        }
+
+        function updateDropdownActive() {
+            document.querySelectorAll('.city-dropdown-item').forEach((item, i) => {
+                item.classList.toggle('active', i === activeDropdownIndex);
+            });
+        }
+
+        // 选择城市
+        function selectCity(city) {
+            currentCity = city;
+            document.getElementById('citySearchInput').value = city;
+            document.getElementById('cityDropdown').classList.remove('show');
+            document.getElementById('cityClearBtn').style.display = 'inline-block';
+            refreshAll();
+        }
+
+        async function loadCities(preferredCity) {
+            try {
+                const cities = await api(`/api/weather/cities?metric=${currentMetric}`);
+                allCities = cities || [];
+                const input = document.getElementById('citySearchInput');
+                const clearBtn = document.getElementById('cityClearBtn');
+                // 优先保留用户之前选中的城市，不存在则默认选第一个
+                if (preferredCity && allCities.includes(preferredCity)) {
+                    currentCity = preferredCity;
+                    input.value = currentCity;
+                    clearBtn.style.display = 'inline-block';
+                } else if (allCities.length > 0) {
+                    currentCity = allCities[0];
+                    input.value = currentCity;
+                    clearBtn.style.display = 'inline-block';
+                } else {
+                    currentCity = '';
+                    input.value = '';
+                    clearBtn.style.display = 'none';
+                }
+            } catch (e) {
+                allCities = [];
+                currentCity = '';
+                document.getElementById('citySearchInput').value = '';
+                document.getElementById('cityClearBtn').style.display = 'none';
+            }
+        }
+
+        // ========== 刷新全部数据 ==========
+        async function refreshAll() {
+            const year = document.getElementById('yearSelect').value;
+            const city = currentCity;
+            const limit = document.getElementById('limitSelect').value;
+            const meta = metricMeta[currentMetric] || {};
+
+            // 更新标题
+            document.getElementById('rankingTitle').textContent = `${year ? year + '年' : ''} 全国城市${meta.name || ''}排名 Top${limit}`;
+            document.getElementById('trendTitle').textContent = `${city || '-'} 历年${meta.name || ''}变化趋势`;
+            document.getElementById('thMetric').textContent = `${meta.displayName || '指标值'}(${meta.unit || ''})`;
+            document.getElementById('thDays').textContent = meta.daysName || '天数';
+
+            // 空值拦截：年份或城市为空时，直接显示暂无数据，不发无效请求
+            if (!year) {
+                rankingChart.clear();
+                rankingChart.setOption({ title: { text: '该指标暂无年份数据', left: 'center', top: 'center', textStyle: { color: '#fbbf24', fontSize: 14 } } });
+                document.getElementById('tableBody').innerHTML = '<tr><td colspan="5" class="loading">该指标暂无数据</td></tr>';
+            }
+            if (!city) {
+                trendChart.clear();
+                trendChart.setOption({ title: { text: '该指标暂无城市数据', left: 'center', top: 'center', textStyle: { color: '#fbbf24', fontSize: 14 } } });
+            }
+            if (!year && !city) return;
+
+            const tasks = [];
+            if (year) tasks.push(loadRanking(year, limit));
+            if (city) tasks.push(loadTrend(city));
+            await Promise.all(tasks);
+
+            // 数据加载完成后，更新标题显示当前城市排名
+            if (city && year) {
+                const rankInfo = currentCityRank
+                    ? ` · ${year}年排名第${currentCityRank}名`
+                    : ` · ${year}年排名Top${limit}之外`;
+                document.getElementById('trendTitle').textContent =
+                    `${city} 历年${meta.name || ''}变化趋势${rankInfo}`;
+            }
+        }
+
+        // ========== 排名柱状图 ==========
+        async function loadRanking(year, limit) {
+            try {
+                const data = await api(`/api/weather/ranking?metric=${currentMetric}&year=${year}&limit=${limit}`);
+                const meta = metricMeta[currentMetric] || {};
+                // 横向柱状图：倒序让第一名在最上面
+                const cities = data.map(d => d.city).reverse();
+                const values = data.map(d => d.metricValue).reverse();
+                const days = data.map(d => d.days).reverse();
+
+                // 查找当前城市在排名中的位置
+                const currentCityData = data.find(d => d.city === currentCity);
+                currentCityRank = currentCityData ? currentCityData.rankNum : null;
+
+                const option = {
+                    tooltip: {
+                        trigger: 'axis',
+                        axisPointer: { type: 'shadow' },
+                        formatter: function(params) {
+                            const idx = params[0].dataIndex;
+                            const d = data[data.length - 1 - idx];
+                            return `<b>${d.city}</b>（${d.province}）<br/>` +
+                                `排名：第${d.rankNum}名<br/>` +
+                                `${meta.displayName}：${d.metricValue}${meta.unit}<br/>` +
+                                `${meta.daysName}：${d.days}天`;
+                        }
+                    },
+                    grid: { left: 80, right: 40, top: 20, bottom: 30 },
+                    xAxis: {
+                        type: 'value',
+                        axisLabel: { color: '#94a3b8' },
+                        splitLine: { lineStyle: { color: '#1e293b' } }
+                    },
+                    yAxis: {
+                        type: 'category',
+                        data: cities,
+                        axisLabel: { color: '#cbd5e1', fontSize: 12 },
+                        axisLine: { lineStyle: { color: '#334155' } }
+                    },
+                    series: [{
+                        type: 'bar',
+                        data: values.map((v, i) => {
+                            // 当前城市的柱子用橙红渐变高亮
+                            if (cities[i] === currentCity) {
+                                return {
+                                    value: v,
+                                    itemStyle: {
+                                        borderRadius: [0, 6, 6, 0],
+                                        color: new echarts.graphic.LinearGradient(0, 0, 1, 0, [
+                                            { offset: 0, color: '#f59e0b' },
+                                            { offset: 1, color: '#ef4444' }
+                                        ])
+                                    }
+                                };
+                            }
+                            return v;
+                        }),
+                        barWidth: '60%',
+                        itemStyle: {
+                            borderRadius: [0, 6, 6, 0],
+                            color: new echarts.graphic.LinearGradient(0, 0, 1, 0, [
+                                { offset: 0, color: '#0ea5e9' },
+                                { offset: 1, color: '#6366f1' }
+                            ])
+                        },
+                        label: {
+                            show: true,
+                            position: 'right',
+                            color: '#e2e8f0',
+                            fontSize: 11,
+                            formatter: '{c}'
+                        }
+                    }]
+                };
+                rankingChart.setOption(option, true);
+                renderTable(data);
+            } catch (e) {
+                rankingChart.clear();
+                rankingChart.setOption({ title: { text: '数据加载失败，请检查后端服务与数据库连接', left: 'center', top: 'center', textStyle: { color: '#f87171', fontSize: 14 } } });
+                document.getElementById('tableBody').innerHTML = '<tr><td colspan="5" class="error-msg">数据加载失败</td></tr>';
+            }
+        }
+
+        // ========== 趋势折线图 ==========
+        async function loadTrend(city) {
+            try {
+                const data = await api(`/api/weather/trend?metric=${currentMetric}&city=${encodeURIComponent(city)}`);
+                const meta = metricMeta[currentMetric] || {};
+                const years = data.map(d => d.year);
+                const values = data.map(d => d.metricValue);
+                const days = data.map(d => d.days);
+
+                const option = {
+                    tooltip: {
+                        trigger: 'axis',
+                        formatter: function(params) {
+                            const p = params[0];
+                            const d = data[p.dataIndex];
+                            let trendHtml = '';
+                            if (d.trendLabel) {
+                                const color = d.trendLabel === '上升' ? '#f87171' : (d.trendLabel === '下降' ? '#4ade80' : '#fbbf24');
+                                trendHtml = `<br/>趋势：<span style="color:${color}">${d.trendLabel}</span>`;
+                            }
+                            return `<b>${d.year}年</b><br/>` +
+                                `${meta.displayName}：${d.metricValue}${meta.unit}<br/>` +
+                                `${meta.daysName}：${d.days}天${trendHtml}`;
+                        }
+                    },
+                    legend: {
+                        data: [meta.displayName, meta.daysName],
+                        textStyle: { color: '#94a3b8' },
+                        top: 0
+                    },
+                    grid: { left: 60, right: 60, top: 40, bottom: 30 },
+                    xAxis: {
+                        type: 'category',
+                        data: years,
+                        axisLabel: { color: '#94a3b8' },
+                        axisLine: { lineStyle: { color: '#334155' } }
+                    },
+                    yAxis: [
+                        {
+                            type: 'value',
+                            name: meta.unit,
+                            nameTextStyle: { color: '#94a3b8' },
+                            axisLabel: { color: '#94a3b8' },
+                            splitLine: { lineStyle: { color: '#1e293b' } }
+                        },
+                        {
+                            type: 'value',
+                            name: '天',
+                            nameTextStyle: { color: '#94a3b8' },
+                            axisLabel: { color: '#94a3b8' },
+                            splitLine: { show: false }
+                        }
+                    ],
+                    series: [
+                        {
+                            name: meta.displayName,
+                            type: 'line',
+                            data: values,
+                            smooth: true,
+                            symbol: 'circle',
+                            symbolSize: 8,
+                            lineStyle: { width: 3, color: '#38bdf8' },
+                            itemStyle: { color: '#38bdf8', borderColor: '#fff', borderWidth: 2 },
+                            areaStyle: {
+                                color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
+                                    { offset: 0, color: 'rgba(56, 189, 248, 0.35)' },
+                                    { offset: 1, color: 'rgba(56, 189, 248, 0.02)' }
+                                ])
+                            }
+                        },
+                        {
+                            name: meta.daysName,
+                            type: 'line',
+                            yAxisIndex: 1,
+                            data: days,
+                            smooth: true,
+                            symbol: 'diamond',
+                            symbolSize: 7,
+                            lineStyle: { width: 2, color: '#fbbf24', type: 'dashed' },
+                            itemStyle: { color: '#fbbf24' }
+                        }
+                    ]
+                };
+                trendChart.setOption(option, true);
+            } catch (e) {
+                trendChart.clear();
+                trendChart.setOption({ title: { text: '趋势数据加载失败', left: 'center', top: 'center', textStyle: { color: '#f87171', fontSize: 14 } } });
+            }
+        }
+
+        // ========== 渲染数据表格 ==========
+        function renderTable(data) {
+            const tbody = document.getElementById('tableBody');
+            if (!data || data.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="5" class="loading">暂无数据</td></tr>';
+                return;
+            }
+            tbody.innerHTML = data.map(d => {
+                let rankClass = 'rank-other';
+                if (d.rankNum === 1) rankClass = 'rank-1';
+                else if (d.rankNum === 2) rankClass = 'rank-2';
+                else if (d.rankNum === 3) rankClass = 'rank-3';
+                return `<tr>
+                    <td><span class="rank-badge ${rankClass}">${d.rankNum}</span></td>
+                    <td>${d.city}</td>
+                    <td>${d.province || '-'}</td>
+                    <td>${d.metricValue}</td>
+                    <td>${d.days}天</td>
+                </tr>`;
+            }).join('');
+        }
+    </script>
+</body>
+</html>
