@@ -1,7 +1,7 @@
 <script setup>
 import { ref, nextTick, onMounted } from 'vue'
 import { ElMessage } from 'element-plus'
-import { sendAiChat } from '@/api/ai'
+import { sendAiChat, saveAiLocation } from '@/api/ai'
 import { useAuthStore } from '@/stores/auth'
 
 const authStore = useAuthStore()
@@ -77,6 +77,14 @@ const handleQuickQuestion = (q) => {
 
 onMounted(() => {
   messages.value.push(welcomeMessage)
+  // 从 localStorage 读取浏览器定位并上报后端，供 AI 在未指定城市时使用
+  try {
+    const cached = localStorage.getItem('nl_weather_location')
+    if (cached) {
+      const { lon, lat } = JSON.parse(cached)
+      saveAiLocation(lon, lat, '').catch(() => {})
+    }
+  } catch (e) { /* 忽略定位上报失败 */ }
 })
 </script>
 

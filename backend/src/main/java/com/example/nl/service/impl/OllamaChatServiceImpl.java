@@ -2,7 +2,12 @@ package com.example.nl.service.impl;
 
 import com.example.nl.service.LivableService;
 import com.example.nl.service.OllamaChatService;
+import com.example.nl.service.RealtimeWeatherService;
 import com.example.nl.service.WeatherAiService;
+import com.example.nl.util.CityCoordUtil;
+import com.example.nl.vo.DailyForecastVO;
+import com.example.nl.vo.IndicesVO;
+import com.example.nl.vo.RealtimeWeatherVO;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
@@ -11,6 +16,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.http.HttpEntity;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
@@ -23,6 +29,7 @@ import org.springframework.data.redis.core.StringRedisTemplate;
 
 import java.time.Duration;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -61,64 +68,77 @@ public class OllamaChatServiceImpl implements OllamaChatService {
     @Autowired
     private LivableService livableService;
 
+    @Autowired
+    private RealtimeWeatherService realtimeWeatherService;
+
+    @Autowired
+    private RedisTemplate<String, Object> redisTemplate;
+
     private final ObjectMapper objectMapper = new ObjectMapper();
 
     /**
      * 系统提示词
      */
     private static final String SYSTEM_PROMPT = """
-            你是一个专业的天气数据智能助手，基于 2000-2020 年全国城市历史气象数据回答问题。
+            你是一个专业的天气数据智能助手，具备两类能力：
+            A. 历史气象数据查询（2000-2020年全国城市）
+            B. 实时天气与外出建议（和风天气实时API）
 
             ## 你的能力
-            1. 天气指标咨询：查询某城市某年的降水量、风速、气温、日照、湿度
-            2. 指标排名查询：查询某年某指标的城市排名，支持按省份筛选
-            3. 宜居城市推荐：根据天气因素推荐某省份最适合居住的城市
-            4. 不宜居城市查询：查询某省份最不适合居住的城市（气候评分最低）
-            5. 单日天气详情：查询某城市某一天的具体天气指标值
-            6. 历年趋势分析：查询某城市某指标2000-2020年的逐年变化趋势
-            7. 月逐日分析：查询某城市某年月某指标的逐日数据，分析月内天气变化
+            1. 历史天气指标咨询：查询某城市某年的降水量、风速、气温、日照、湿度
+            2. 历史指标排名：查询某年某指标的城市排名，支持按省份筛选
+            3. 宜居城市推荐：根据天气因素推荐某省份最适合/最不适合居住的城市
+            4. 历史单日详情：查询某城市某一天的具体历史天气指标值
+            5. 历年趋势分析：查询某城市某指标2000-2020年的逐年变化趋势
+            6. 月逐日分析：查询某城市某年月某指标的逐日数据
+            7. 实时天气：查询某城市当前实时天气和生活指数
+            8. 未来7天预报：查询某城市未来7天天气预报
+            9. 外出建议：根据实时天气和生活指数，回答"今天适合爬山/跑步/晾晒吗"
 
             ## 数据范围
-            - 时间：2000-2020 年，用户未指定时默认 2020 年
+            - 历史数据：2000-2020年，用户未指定时默认2020年
+            - 实时数据：当前天气和未来7天预报，来自和风天气API
             - 指标：降水(mm)、风速(m/s)、气温(℃)、日照(h)、湿度(%)
 
             ## 回答规则
-            1. 必须调用工具获取真实数据，禁止编造任何数据或评分
-            2. 用户未指定年份时默认使用 2020 年
-            3. 用户未指定推荐数量时默认推荐 3 个城市
+            1. 必须调用工具获取真实数据，禁止编造任何数据
+            2. 用户未指定年份时默认使用2020年
+            3. 用户未指定推荐数量时默认推荐3个城市
             4. 回答简洁清晰，数据带上单位
-            5. 宜居推荐要说明评分依据，列出每个城市的主要指标（气温、降水、湿度等具体数值）
-            6. 超出天气范围的问题礼貌拒绝
+            5. 超出天气范围的问题礼貌拒绝
 
             ## 工具使用规则
-            - get_city_summary：查询单城天气指标（降水/风速/气温/日照/湿度），不返回宜居评分
-            - get_ranking：查询指标排名，metric 必须用编码(rain/wind/temp/sun/humidity)
-            - recommend_livable_city：推荐宜居城市，返回评分排名列表。如果用户问某个具体城市的宜居评分，设置较大的 limit（如20），然后在结果中找该城市；如果找不到，如实告知该城市未在评分列表中
-            - recommend_least_livable_city：查询最不适合居住的城市（评分最低），用户问"不适合居住""最差""气候最差"等问题时使用
-            - get_daily_detail：查询某城市某一天的全部5个天气指标（气温、降水、湿度、风速、日照），用户问某一天的天气时直接调用此工具，它会一次性返回全部指标，不要问用户想知道哪个指标
-            - get_trend_analysis：查询某城市某指标的历年变化趋势，用户问"趋势""变化""逐年""20年"等问题时使用，metric 必须用编码(rain/wind/temp/sun/humidity)
-            - get_monthly_daily：查询某城市某年月某指标的逐日数据，用户问"某月份变化""1月份风速""月内趋势"时使用
+            - get_city_summary：历史单城年度天气指标汇总
+            - get_ranking：历史指标排名，metric用编码(rain/wind/temp/sun/humidity)
+            - recommend_livable_city：推荐宜居城市
+            - recommend_least_livable_city：查询最不宜居城市
+            - get_daily_detail：历史某一天的全部5个指标
+            - get_trend_analysis：历史历年趋势
+            - get_monthly_daily：历史月逐日数据
+            - get_realtime_weather：查询当前实时天气+生活指数，用户问"今天天气""现在气温""实时天气"时使用。city参数可选，不传则使用浏览器定位城市
+            - get_7day_forecast：查询未来7天天气预报，用户问"未来一周""接下来几天""哪天适合出去玩"时使用
+            - get_outdoor_advice：根据实时天气和生活指数给出外出建议，用户问"适合爬山吗""适合跑步吗""适合晾晒吗"时使用
             - get_meta：获取支持的指标、省份和年份范围
 
             ## 常见问题示例
             - "北京2020年天气怎么样" → get_city_summary
-            - "上海降水量多少" → get_city_summary（未指定年份默认2020）
             - "2020年降水最多的城市" → get_ranking(metric=rain)
-            - "福建省气温排名前十" → get_ranking(metric=temp, province=福建省, limit=10)
-            - "云南哪个城市最适合居住" → recommend_livable_city(province=云南省)
-            - "广东气候最差的城市" → recommend_least_livable_city(province=广东省)
-            - "成都宜居评分多少" → recommend_livable_city(province=四川省, limit=20)，在结果中找成都
-            - "2020年3月15日杭州天气" → get_daily_detail(date=2020-03-15)
+            - "云南哪个城市最适合居住" → recommend_livable_city
+            - "2020年3月15日杭州天气" → get_daily_detail
             - "深圳近20年气温变化" → get_trend_analysis(metric=temp)
-            - "2019年7月武汉气温怎么变的" → get_monthly_daily(year=2019, month=7, metric=temp)
-            - "那广州呢"（接上文）→ 结合上下文理解，调用对应工具
-            - "上海和北京哪个更宜居" → recommend_livable_city 分别查询后对比
+            - "今天福州天气怎么样" → get_realtime_weather(city=福州)
+            - "现在气温多少" → get_realtime_weather（不传city，使用定位城市）
+            - "未来一周北京适合出去玩吗" → get_7day_forecast(city=北京)
+            - "今天适合爬山吗" → get_outdoor_advice(activity=爬山)
+            - "明天适合跑步吗" → get_outdoor_advice(activity=跑步)
+            - "那广州呢"（接上文）→ 结合上下文理解
+            - "上海和北京哪个更宜居" → recommend_livable_city分别查询后对比
 
             ## 重要提醒
-            - 城市名和省份名可以用简称（如"福州"="福州市"，"福建"="福建省"）
-            - 绝对不要编造数据，工具返回数据就用什么数据来组织自然语言
-            - 用户提到"那它呢""那XX呢"时，结合上下文理解用户在问什么
-            - 比较两个城市时，分别调用工具查询后再对比
+            - 城市名可以用简称（如"福州"="福州市"）
+            - 绝对不要编造数据，工具返回什么就用什么组织回答
+            - 实时天气和外出建议是当前天气，不是历史数据
+            - 如果城市不在支持列表中，如实告知"暂不支持该城市的实时天气查询"
             """;
 
     /**
@@ -242,6 +262,45 @@ public class OllamaChatServiceImpl implements OllamaChatService {
         req8.add("month");
         req8.add("metric");
         tools.add(tool8);
+
+        // 工具9：实时天气
+        ObjectNode tool9 = objectMapper.createObjectNode();
+        tool9.put("type", "function");
+        ObjectNode fn9 = tool9.putObject("function");
+        fn9.put("name", "get_realtime_weather");
+        fn9.put("description", "查询某城市当前实时天气和生活指数（穿衣/紫外线/运动/感冒），用户问今天天气、现在气温、实时天气时使用");
+        ObjectNode params9 = fn9.putObject("parameters");
+        params9.put("type", "object");
+        ObjectNode props9 = params9.putObject("properties");
+        props9.putObject("city").put("type", "string").put("description", "城市名称，如福州、北京，不传则使用浏览器定位城市");
+        tools.add(tool9);
+
+        // 工具10：7天预报
+        ObjectNode tool10 = objectMapper.createObjectNode();
+        tool10.put("type", "function");
+        ObjectNode fn10 = tool10.putObject("function");
+        fn10.put("name", "get_7day_forecast");
+        fn10.put("description", "查询某城市未来7天天气预报（最高最低温、天气现象、风力），用户问未来一周、接下来几天、哪天适合出去玩时使用");
+        ObjectNode params10 = fn10.putObject("parameters");
+        params10.put("type", "object");
+        ObjectNode props10 = params10.putObject("properties");
+        props10.putObject("city").put("type", "string").put("description", "城市名称，如福州、北京");
+        tools.add(tool10);
+
+        // 工具11：外出建议
+        ObjectNode tool11 = objectMapper.createObjectNode();
+        tool11.put("type", "function");
+        ObjectNode fn11 = tool11.putObject("function");
+        fn11.put("name", "get_outdoor_advice");
+        fn11.put("description", "根据实时天气和生活指数给出外出活动建议，用户问适合爬山吗、适合跑步吗、适合晾晒吗时使用");
+        ObjectNode params11 = fn11.putObject("parameters");
+        params11.put("type", "object");
+        ObjectNode props11 = params11.putObject("properties");
+        props11.putObject("city").put("type", "string").put("description", "城市名称，不传则使用浏览器定位城市");
+        props11.putObject("activity").put("type", "string").put("description", "活动类型：爬山、跑步、晾晒、出行、出游等");
+        ArrayNode req11 = params11.putArray("required");
+        req11.add("activity");
+        tools.add(tool11);
 
         // 工具5：获取元信息
         ObjectNode tool4 = objectMapper.createObjectNode();
@@ -476,6 +535,46 @@ public class OllamaChatServiceImpl implements OllamaChatService {
                     var result = weatherAiService.getMeta();
                     return objectMapper.writeValueAsString(result);
                 }
+                case "get_realtime_weather": {
+                    double[] coord = resolveCityCoord(args.path("city").asText(null));
+                    if (coord == null) {
+                        return "{\"error\": \"暂不支持该城市的实时天气查询，请换一个大城市试试\"}";
+                    }
+                    RealtimeWeatherVO rt = realtimeWeatherService.getRealtime(coord[0], coord[1]);
+                    IndicesVO indices = realtimeWeatherService.getIndices(coord[0], coord[1]);
+                    Map<String, Object> result = new LinkedHashMap<>();
+                    result.put("city", args.path("city").asText("当前位置"));
+                    result.put("realtime", rt);
+                    result.put("indices", indices != null ? indices.getItems() : new ArrayList<>());
+                    return objectMapper.writeValueAsString(result);
+                }
+                case "get_7day_forecast": {
+                    double[] coord = resolveCityCoord(args.path("city").asText(null));
+                    if (coord == null) {
+                        return "{\"error\": \"暂不支持该城市的实时天气查询，请换一个大城市试试\"}";
+                    }
+                    List<DailyForecastVO> daily = realtimeWeatherService.getDaily(coord[0], coord[1]);
+                    Map<String, Object> result = new LinkedHashMap<>();
+                    result.put("city", args.path("city").asText("当前位置"));
+                    result.put("forecast", daily);
+                    return objectMapper.writeValueAsString(result);
+                }
+                case "get_outdoor_advice": {
+                    double[] coord = resolveCityCoord(args.path("city").asText(null));
+                    if (coord == null) {
+                        return "{\"error\": \"暂不支持该城市的实时天气查询，请换一个大城市试试\"}";
+                    }
+                    String activity = args.path("activity").asText("");
+                    RealtimeWeatherVO rt = realtimeWeatherService.getRealtime(coord[0], coord[1]);
+                    IndicesVO indices = realtimeWeatherService.getIndices(coord[0], coord[1]);
+                    List<DailyForecastVO> daily = realtimeWeatherService.getDaily(coord[0], coord[1]);
+                    Map<String, Object> result = new LinkedHashMap<>();
+                    result.put("activity", activity);
+                    result.put("realtime", rt);
+                    result.put("indices", indices != null ? indices.getItems() : new ArrayList<>());
+                    result.put("todayForecast", !daily.isEmpty() ? daily.get(0) : null);
+                    return objectMapper.writeValueAsString(result);
+                }
                 default:
                     return "{\"error\": \"未知工具: " + toolName + "\"}";
             }
@@ -519,6 +618,33 @@ public class OllamaChatServiceImpl implements OllamaChatService {
                     return content.substring(jsonStart, i + 1).trim();
                 }
             }
+        }
+        return null;
+    }
+
+    /**
+     * 解析城市名为经纬度 [lon, lat]
+     * 1. 优先用 CityCoordUtil 匹配城市名
+     * 2. 未指定城市时从 Redis 读取浏览器定位
+     * @return [lon, lat] 或 null
+     */
+    @SuppressWarnings("unchecked")
+    private double[] resolveCityCoord(String city) {
+        // 1. 指定了城市名
+        if (city != null && !city.isBlank()) {
+            double[] coord = CityCoordUtil.getCoord(city);
+            if (coord != null) return coord;
+        }
+        // 2. 从 Redis 读取浏览器定位
+        try {
+            Object cached = redisTemplate.opsForValue().get("weather:user:location");
+            if (cached instanceof Map<?, ?> map) {
+                double lon = ((Number) map.get("lon")).doubleValue();
+                double lat = ((Number) map.get("lat")).doubleValue();
+                return new double[]{lon, lat};
+            }
+        } catch (Exception e) {
+            log.warn("读取浏览器定位失败: {}", e.getMessage());
         }
         return null;
     }
